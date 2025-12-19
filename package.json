@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "start": "node dist/server.js",
     "test": "node --test dist/tests/*.js",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"
