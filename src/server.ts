@@ -31,7 +31,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   const method = req.method || 'GET';
 
   try {
-    if (path === '/health' || path === '/') {
+    if (path === '/health') {
+      return json(res, { status: 'healthy', service: 'data-core', version: process.env.npm_package_version || 'unknown' });
+    }
+
+    if (path === '/') {
       return json(res, { status: 'ok', service: 'data-core' });
     }
 
