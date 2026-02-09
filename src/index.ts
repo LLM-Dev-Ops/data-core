@@ -23,3 +23,6 @@ export * from './services';
 
 // Handlers (for advanced use cases)
 export * from './handlers';
+
+// Execution span types (for agentics-execution-engine integration)
+export * from './execution';

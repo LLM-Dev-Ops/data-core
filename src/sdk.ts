@@ -1,8 +1,12 @@
 /**
  * LLM-Data-Core SDK - Programmatic interface for data coordination
+ *
+ * Instrumented: exposes getExecutionResult() to retrieve the
+ * hierarchical execution graph conforming to CoreExecutionResult.
  */
 
-import { initializeDataCore, DataCoreConfig, DataCoreContext } from './lib';
+import { initializeDataCore, DataCoreConfig, DataCoreContext } from './lib.js';
+import type { CoreExecutionResult } from './execution/index.js';
 
 export class DataCoreSDK {
   private context: DataCoreContext | null = null;
@@ -60,6 +64,11 @@ export class DataCoreSDK {
   async getConfig(key: string): Promise<unknown> {
     return this.ensureInitialized().adapters.configManager.getConfig(key);
   }
+
+  // Execution Graph
+  getExecutionResult(): CoreExecutionResult {
+    return this.ensureInitialized().getExecutionResult();
+  }
 }
 
 /** Factory function for quick initialization */
@@ -69,4 +78,4 @@ export async function createDataCore(config: DataCoreConfig = {}): Promise<DataC
   return sdk;
 }
 
-export { DataCoreConfig, DataCoreContext } from './lib';
+export { DataCoreConfig, DataCoreContext } from './lib.js';
