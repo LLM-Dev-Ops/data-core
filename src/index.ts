@@ -24,5 +24,8 @@ export * from './services';
 // Handlers (for advanced use cases)
 export * from './handlers';
 
+// Persistence gateway (sole path for simulation persistence)
+export * from './persistence';
+
 // Execution span types (for agentics-execution-engine integration)
 export * from './execution';

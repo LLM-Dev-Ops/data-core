@@ -4,6 +4,7 @@
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { createDataCore, DataCoreSDK } from './sdk';
+import { isInvalidSimulationError } from './persistence/index.js';
 
 const PORT = process.env.PORT || 8080;
 
@@ -88,8 +89,40 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       return json(res, result);
     }
 
+    if (path === '/data' && method === 'POST') {
+      const body = await parseBody(req);
+      const result = await sdk.storeData(
+        body.dataId as string,
+        body.data as Record<string, unknown>,
+        body.simulationId ? { simulationId: body.simulationId as string } : undefined,
+      );
+      return json(res, result);
+    }
+
+    if (path === '/simulation/persist' && method === 'POST') {
+      const body = await parseBody(req);
+      const result = await sdk.persistSimulation({
+        operationId: body.operationId as string,
+        operationType: body.operationType as 'context:persist' | 'artifact:register' | 'data:store' | 'lineage:record',
+        simulationId: body.simulationId as string,
+        entityId: body.entityId as string,
+        payload: (body.payload as Record<string, unknown>) || {},
+        metadata: body.metadata as Record<string, unknown> | undefined,
+      });
+      return json(res, result);
+    }
+
     json(res, { error: 'not found' }, 404);
   } catch (err) {
+    if (isInvalidSimulationError(err)) {
+      return json(res, {
+        error: err.message,
+        simulationId: err.simulationId,
+        operationId: err.operationId,
+        subsystemFailures: err.subsystemFailures,
+        isTerminal: true,
+      }, 422);
+    }
     json(res, { error: (err as Error).message }, 500);
   }
 }

@@ -24,6 +24,7 @@ import {
 import { DataRequestHandler, ContextHandler, ArtifactHandler } from './handlers/index.js';
 import { SpanContext, instrumentAdapter, finalizeRepoSpans } from './execution/index.js';
 import type { CoreExecutionResult } from './execution/index.js';
+import { SimulationPersistenceGateway } from './persistence/index.js';
 
 const CORE_NAME = 'llm-data-core';
 
@@ -61,6 +62,8 @@ export interface DataCoreContext {
     context: ContextHandler;
     artifact: ArtifactHandler;
   };
+  /** The sole gateway for all simulation persistence */
+  persistenceGateway: SimulationPersistenceGateway;
   /** Execution span context for the agentics execution graph */
   spanContext: SpanContext;
   /** Finalize the execution graph and return a validated CoreExecutionResult */
@@ -106,10 +109,17 @@ export async function initializeDataCore(config: DataCoreConfig = {}): Promise<D
   const dataAccess = new DataAccessService(dataVault);
   const schemaNormalizer = new SchemaNormalizerService(schemaRegistry);
 
-  // Initialize handlers (request routing)
-  const dataRequest = new DataRequestHandler(dataAccess, schemaNormalizer);
-  const context = new ContextHandler(contextCoordinator, lineageResolver);
-  const artifact = new ArtifactHandler(registry);
+  // Initialize the persistence gateway (sole path for simulation persistence)
+  const persistenceGateway = new SimulationPersistenceGateway({
+    memoryGraph,
+    dataVault,
+    registry,
+  });
+
+  // Initialize handlers (request routing — persist operations flow through gateway)
+  const dataRequest = new DataRequestHandler(dataAccess, schemaNormalizer, persistenceGateway);
+  const context = new ContextHandler(contextCoordinator, lineageResolver, persistenceGateway);
+  const artifact = new ArtifactHandler(registry, persistenceGateway);
 
   const getExecutionResult = (): CoreExecutionResult => {
     finalizeRepoSpans(spanContext);
@@ -120,6 +130,7 @@ export async function initializeDataCore(config: DataCoreConfig = {}): Promise<D
     adapters: { memoryGraph, registry, dataVault, configManager, schemaRegistry },
     services: { contextCoordinator, lineageResolver, dataAccess, schemaNormalizer },
     handlers: { dataRequest, context, artifact },
+    persistenceGateway,
     spanContext,
     getExecutionResult,
   };

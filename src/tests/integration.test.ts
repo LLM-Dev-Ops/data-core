@@ -4,6 +4,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import { initializeDataCore, createDataCore } from '../index';
+import { InvalidSimulationError, isInvalidSimulationError } from '../persistence/index';
 import type { ExecutionSpan, CoreExecutionResult } from '../execution';
 
 describe('LLM-Data-Core Integration', () => {
@@ -27,6 +28,9 @@ describe('LLM-Data-Core Integration', () => {
     assert.ok(core.handlers.dataRequest, 'dataRequest handler should exist');
     assert.ok(core.handlers.context, 'context handler should exist');
     assert.ok(core.handlers.artifact, 'artifact handler should exist');
+
+    // Verify persistence gateway is created
+    assert.ok(core.persistenceGateway, 'persistenceGateway should exist');
   });
 
   test('SDK createDataCore factory works', async () => {
@@ -55,6 +59,209 @@ describe('LLM-Data-Core Integration', () => {
   });
 });
 
+describe('SimulationPersistenceGateway', () => {
+  test('persist invokes all three mandatory subsystems', async () => {
+    const core = await initializeDataCore({ simulatorMode: true });
+    const result = await core.persistenceGateway.persist({
+      operationId: 'op-1',
+      operationType: 'context:persist',
+      simulationId: 'sim-1',
+      entityId: 'entity-1',
+      payload: { key: 'value' },
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.acceptance.accepted, true);
+    assert.strictEqual(result.acceptance.subsystems.length, 3);
+
+    const subsystemNames = result.acceptance.subsystems.map(s => s.subsystem).sort();
+    assert.deepStrictEqual(subsystemNames, ['data-vault', 'memory-graph', 'registry']);
+
+    for (const sub of result.acceptance.subsystems) {
+      assert.strictEqual(sub.accepted, true, `${sub.subsystem} should have accepted`);
+      assert.ok(sub.receipt, `${sub.subsystem} should have a receipt`);
+    }
+  });
+
+  test('persist creates execution spans for all three subsystems', async () => {
+    const core = await initializeDataCore({ simulatorMode: true });
+    await core.persistenceGateway.persist({
+      operationId: 'op-2',
+      operationType: 'artifact:register',
+      simulationId: 'sim-2',
+      entityId: 'entity-2',
+      payload: { type: 'model' },
+    });
+
+    const spans = core.spanContext.getSpans();
+    const repoSpans = spans.filter(s => s.type === 'repo');
+    const repoNames = repoSpans.map(s => s.name);
+
+    assert.ok(repoNames.includes('llm-memory-graph'), 'memory-graph repo span must exist');
+    assert.ok(repoNames.includes('llm-data-vault'), 'data-vault repo span must exist');
+    assert.ok(repoNames.includes('llm-registry'), 'registry repo span must exist');
+  });
+
+  test('acceptance phase is synchronous (all settled before return)', async () => {
+    const core = await initializeDataCore({ simulatorMode: true });
+    const result = await core.persistenceGateway.persist({
+      operationId: 'op-3',
+      operationType: 'context:persist',
+      simulationId: 'sim-3',
+      entityId: 'entity-3',
+      payload: {},
+    });
+
+    for (const sub of result.acceptance.subsystems) {
+      assert.ok(sub.acceptedAt, `${sub.subsystem} should have acceptedAt timestamp`);
+    }
+    assert.ok(result.acceptance.acceptedAt, 'overall acceptedAt should be set');
+    assert.ok(result.persistedAt >= result.acceptance.acceptedAt!,
+      'persistedAt should be after or equal to acceptedAt');
+  });
+
+  test('post-validation tasks are scheduled after acceptance', async () => {
+    const core = await initializeDataCore({ simulatorMode: true });
+    const result = await core.persistenceGateway.persist({
+      operationId: 'op-4',
+      operationType: 'context:persist',
+      simulationId: 'sim-4',
+      entityId: 'entity-4',
+      payload: {},
+    });
+
+    assert.ok(result.postValidationTasks.length > 0, 'should have post-validation tasks');
+    for (const task of result.postValidationTasks) {
+      assert.ok(task.taskId, 'task should have an ID');
+      assert.ok(['index', 'replicate', 'notify', 'audit'].includes(task.type));
+    }
+  });
+
+  test('handler persist operations flow through gateway (all three repos invoked)', async () => {
+    const core = await initializeDataCore({ simulatorMode: true });
+
+    await core.handlers.context.persist('ctx-gw-1', { simulationId: 'sim-5' });
+
+    const spans = core.spanContext.getSpans();
+    const repoNames = spans.filter(s => s.type === 'repo').map(s => s.name);
+    assert.ok(repoNames.includes('llm-memory-graph'));
+    assert.ok(repoNames.includes('llm-data-vault'));
+    assert.ok(repoNames.includes('llm-registry'));
+  });
+
+  test('artifact register flows through gateway (all three repos invoked)', async () => {
+    const core = await initializeDataCore({ simulatorMode: true });
+
+    await core.handlers.artifact.register('art-gw-1', { type: 'model', version: '1.0' });
+
+    const spans = core.spanContext.getSpans();
+    const repoNames = spans.filter(s => s.type === 'repo').map(s => s.name);
+    assert.ok(repoNames.includes('llm-memory-graph'));
+    assert.ok(repoNames.includes('llm-data-vault'));
+    assert.ok(repoNames.includes('llm-registry'));
+  });
+
+  test('data store flows through gateway (all three repos invoked)', async () => {
+    const core = await initializeDataCore({ simulatorMode: true });
+
+    await core.handlers.dataRequest.store('data-gw-1', { value: 42 });
+
+    const spans = core.spanContext.getSpans();
+    const repoNames = spans.filter(s => s.type === 'repo').map(s => s.name);
+    assert.ok(repoNames.includes('llm-memory-graph'));
+    assert.ok(repoNames.includes('llm-data-vault'));
+    assert.ok(repoNames.includes('llm-registry'));
+  });
+
+  test('execution graph remains valid after gateway operations', async () => {
+    const core = await initializeDataCore({ simulatorMode: true });
+
+    await core.persistenceGateway.persist({
+      operationId: 'op-valid',
+      operationType: 'context:persist',
+      simulationId: 'sim-valid',
+      entityId: 'entity-valid',
+      payload: { key: 'value' },
+    });
+
+    const result = core.getExecutionResult();
+    assert.strictEqual(result.success, true, 'execution graph should be valid');
+    assert.strictEqual(result.failure_reasons, undefined, 'no failure reasons');
+
+    const spans = result.execution_graph.spans;
+    const coreSpans = spans.filter(s => s.type === 'core');
+    const repoSpans = spans.filter(s => s.type === 'repo');
+    const agentSpans = spans.filter(s => s.type === 'agent');
+
+    assert.strictEqual(coreSpans.length, 1, 'exactly one core span');
+    assert.ok(repoSpans.length >= 3, 'at least three repo spans (mandatory trio)');
+    assert.ok(agentSpans.length >= 3, 'at least three agent spans');
+  });
+
+  test('SDK persistSimulation method works', async () => {
+    const sdk = await createDataCore({ simulatorMode: true });
+    const result = await sdk.persistSimulation({
+      operationId: 'sdk-op-1',
+      operationType: 'context:persist',
+      simulationId: 'sdk-sim-1',
+      entityId: 'sdk-entity-1',
+      payload: { key: 'val' },
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.acceptance.accepted, true);
+    assert.strictEqual(result.acceptance.subsystems.length, 3);
+  });
+
+  test('SDK storeData method works', async () => {
+    const sdk = await createDataCore({ simulatorMode: true });
+    const result = await sdk.storeData('data-sdk-1', { value: 'test' });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.id, 'data-sdk-1');
+  });
+});
+
+describe('InvalidSimulationError', () => {
+  test('is a proper Error subclass', () => {
+    const err = new InvalidSimulationError({
+      simulationId: 'sim-x',
+      operationId: 'op-x',
+      message: 'test failure',
+      subsystemFailures: [{ subsystem: 'data-vault', error: 'connection refused' }],
+    });
+
+    assert.ok(err instanceof Error);
+    assert.ok(err instanceof InvalidSimulationError);
+    assert.strictEqual(err.isTerminal, true);
+    assert.strictEqual(err.simulationId, 'sim-x');
+    assert.strictEqual(err.subsystemFailures.length, 1);
+  });
+
+  test('isInvalidSimulationError type guard works', () => {
+    const err = new InvalidSimulationError({
+      simulationId: 'sim-y',
+      operationId: 'op-y',
+      message: 'test',
+      subsystemFailures: [],
+    });
+    assert.ok(isInvalidSimulationError(err));
+    assert.ok(!isInvalidSimulationError(new Error('regular error')));
+    assert.ok(!isInvalidSimulationError(null));
+  });
+
+  test('InvalidSimulationError is frozen (immutable)', () => {
+    const err = new InvalidSimulationError({
+      simulationId: 'sim-z',
+      operationId: 'op-z',
+      message: 'frozen test',
+      subsystemFailures: [],
+    });
+    assert.throws(() => {
+      (err as any).simulationId = 'tampered';
+    }, 'should not allow modification of simulationId');
+  });
+});
+
 describe('Execution Graph Instrumentation', () => {
   test('core span is created on initialization', async () => {
     const core = await initializeDataCore({ simulatorMode: true });
@@ -80,7 +287,7 @@ describe('Execution Graph Instrumentation', () => {
   test('adapter call creates repo + agent spans', async () => {
     const core = await initializeDataCore({ simulatorMode: true });
 
-    // Call an adapter method (via handler)
+    // Call an adapter method (via handler — now routes through gateway)
     await core.handlers.context.persist('ctx-1', { key: 'value' });
 
     const spans = core.spanContext.getSpans();
@@ -106,7 +313,7 @@ describe('Execution Graph Instrumentation', () => {
   test('multiple adapter calls produce correct hierarchy', async () => {
     const core = await initializeDataCore({ simulatorMode: true });
 
-    // Touch multiple adapters through different handlers
+    // Touch multiple adapters through different handlers (all now via gateway)
     await core.handlers.context.persist('ctx-1', {});
     await core.handlers.artifact.register('art-1', { type: 'model', version: '1.0' });
     await core.handlers.dataRequest.get('data-1');
@@ -209,8 +416,8 @@ describe('Execution Graph Instrumentation', () => {
     await core.handlers.artifact.register('art-1', { type: 'model', version: '1.0' });
 
     const result = core.getExecutionResult();
-    const json = JSON.stringify(result);
-    const parsed = JSON.parse(json) as CoreExecutionResult;
+    const jsonStr = JSON.stringify(result);
+    const parsed = JSON.parse(jsonStr) as CoreExecutionResult;
 
     assert.deepStrictEqual(parsed, result, 'round-trip JSON serialization should be lossless');
   });

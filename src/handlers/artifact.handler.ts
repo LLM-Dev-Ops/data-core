@@ -1,21 +1,25 @@
-import type { RegistryAdapter, IArtifactMetadata } from '../adapters';
+import { randomUUID } from 'crypto';
+import type { RegistryAdapter } from '../adapters';
+import type { SimulationPersistenceGateway } from '../persistence/index.js';
 
 export interface ArtifactRequest { action: 'register' | 'lookup'; artifactId?: string; metadata?: Record<string, unknown>; }
 export interface ArtifactResponse { success: boolean; artifact?: Record<string, unknown>; error?: string; }
 
 export class ArtifactHandler {
-  constructor(private registry: RegistryAdapter) {}
+  constructor(
+    private registry: RegistryAdapter,
+    private persistenceGateway: SimulationPersistenceGateway
+  ) {}
 
   async register(artifactId: string, metadata: Record<string, unknown>): Promise<{ success: boolean; id: string }> {
-    const artifact: IArtifactMetadata = {
-      id: artifactId,
-      type: (metadata.type as string) || 'unknown',
-      version: (metadata.version as string) || '1.0.0',
-      tags: metadata.tags as string[],
-      properties: metadata
-    };
-    const id = await this.registry.registerArtifact(artifact);
-    return { success: true, id };
+    const result = await this.persistenceGateway.persist({
+      operationId: randomUUID(),
+      operationType: 'artifact:register',
+      simulationId: (metadata.simulationId as string) || artifactId,
+      entityId: artifactId,
+      payload: metadata,
+    });
+    return { success: result.success, id: artifactId };
   }
 
   async lookup(artifactId: string): Promise<Record<string, unknown> | null> {

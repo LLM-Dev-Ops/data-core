@@ -3,17 +3,21 @@
  * LLM-Data-Core CLI - Command-line interface for data coordination
  */
 
+import { randomUUID } from 'crypto';
 import { initializeDataCore } from './lib';
+import { isInvalidSimulationError } from './persistence/index.js';
 
 const COMMANDS: Record<string, string> = {
-  'context:persist': 'Persist context data via Memory-Graph',
+  'context:persist': 'Persist context data (via gateway)',
   'context:query': 'Query context by ID or pattern',
   'lineage:resolve': 'Resolve data lineage for an artifact',
-  'artifact:register': 'Register artifact via Registry',
+  'artifact:register': 'Register artifact (via gateway)',
   'artifact:lookup': 'Lookup artifact by ID',
+  'data:store': 'Store data (via gateway)',
   'data:get': 'Get secure data via Data-Vault',
   'schema:resolve': 'Resolve schema for data type',
   'schema:normalize': 'Get schema-normalized view of data',
+  'simulation:persist': 'Persist simulation data (direct gateway)',
   'config:get': 'Get configuration value',
   'help': 'Show this help message'
 };
@@ -78,6 +82,24 @@ async function main(): Promise<void> {
       console.log(JSON.stringify(result, null, 2));
       break;
     }
+    case 'data:store': {
+      const [dataId, data] = args;
+      const result = await core.handlers.dataRequest.store(dataId, JSON.parse(data || '{}'));
+      console.log(JSON.stringify(result, null, 2));
+      break;
+    }
+    case 'simulation:persist': {
+      const [simulationId, entityId, data] = args;
+      const result = await core.persistenceGateway.persist({
+        operationId: randomUUID(),
+        operationType: 'context:persist',
+        simulationId,
+        entityId,
+        payload: JSON.parse(data || '{}'),
+      });
+      console.log(JSON.stringify(result, null, 2));
+      break;
+    }
     case 'config:get': {
       const [key] = args;
       const result = await core.adapters.configManager.getConfig(key);
@@ -90,4 +112,12 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(err => { console.error('Error:', err.message); process.exit(1); });
+main().catch(err => {
+  if (isInvalidSimulationError(err)) {
+    console.error(`INVALID SIMULATION [${err.simulationId}]: ${err.message}`);
+    console.error('Subsystem failures:', JSON.stringify(err.subsystemFailures, null, 2));
+    process.exit(2);
+  }
+  console.error('Error:', err.message);
+  process.exit(1);
+});

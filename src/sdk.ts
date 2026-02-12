@@ -7,6 +7,7 @@
 
 import { initializeDataCore, DataCoreConfig, DataCoreContext } from './lib.js';
 import type { CoreExecutionResult } from './execution/index.js';
+import type { SimulationPersistenceRequest, SimulationPersistenceResult } from './persistence/index.js';
 
 export class DataCoreSDK {
   private context: DataCoreContext | null = null;
@@ -48,6 +49,10 @@ export class DataCoreSDK {
   }
 
   // Data Operations
+  async storeData(dataId: string, data: Record<string, unknown>, options?: { simulationId?: string }): Promise<{ success: boolean; id: string }> {
+    return this.ensureInitialized().handlers.dataRequest.store(dataId, data, options);
+  }
+
   async getData(dataId: string, options?: { schema?: string }): Promise<Record<string, unknown>> {
     return this.ensureInitialized().handlers.dataRequest.get(dataId, options || {});
   }
@@ -63,6 +68,11 @@ export class DataCoreSDK {
   // Config Access
   async getConfig(key: string): Promise<unknown> {
     return this.ensureInitialized().adapters.configManager.getConfig(key);
+  }
+
+  // Direct gateway access
+  async persistSimulation(request: SimulationPersistenceRequest): Promise<SimulationPersistenceResult> {
+    return this.ensureInitialized().persistenceGateway.persist(request);
   }
 
   // Execution Graph

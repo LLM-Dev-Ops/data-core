@@ -1,4 +1,6 @@
-import type { ContextCoordinatorService, LineageResolverService, ContextMetadata } from '../services';
+import { randomUUID } from 'crypto';
+import type { ContextCoordinatorService, LineageResolverService } from '../services';
+import type { SimulationPersistenceGateway } from '../persistence/index.js';
 
 export interface ContextRequest { action: 'persist' | 'query' | 'lineage'; contextId?: string; data?: Record<string, unknown>; }
 export interface ContextResponse { success: boolean; data?: unknown; error?: string; }
@@ -6,13 +8,20 @@ export interface ContextResponse { success: boolean; data?: unknown; error?: str
 export class ContextHandler {
   constructor(
     private contextCoordinator: ContextCoordinatorService,
-    private lineageResolver: LineageResolverService
+    private lineageResolver: LineageResolverService,
+    private persistenceGateway: SimulationPersistenceGateway
   ) {}
 
   async persist(contextId: string, data: Record<string, unknown>): Promise<{ success: boolean; id: string }> {
-    const metadata: ContextMetadata = { sessionId: contextId, timestamp: Date.now(), ...data };
-    await this.contextCoordinator.trackContext(contextId, metadata);
-    return { success: true, id: contextId };
+    const result = await this.persistenceGateway.persist({
+      operationId: randomUUID(),
+      operationType: 'context:persist',
+      simulationId: (data.simulationId as string) || contextId,
+      entityId: contextId,
+      payload: { sessionId: contextId, timestamp: Date.now(), ...data },
+      metadata: data.lineageSource ? { lineageSource: data.lineageSource } : undefined,
+    });
+    return { success: result.success, id: contextId };
   }
 
   async query(contextId: string): Promise<Record<string, unknown>[]> {
