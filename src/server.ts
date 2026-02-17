@@ -5,6 +5,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { createDataCore, DataCoreSDK } from './sdk';
 import { isInvalidSimulationError } from './persistence/index.js';
+import { handleLineageRecord } from './handlers/index.js';
 
 const PORT = process.env.PORT || 8080;
 
@@ -110,6 +111,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         metadata: body.metadata as Record<string, unknown> | undefined,
       });
       return json(res, result);
+    }
+
+    if (path === '/v1/lineage/record' && method === 'POST') {
+      const body = await parseBody(req);
+      const result = handleLineageRecord(body);
+      return json(res, result, 202);
     }
 
     json(res, { error: 'not found' }, 404);
