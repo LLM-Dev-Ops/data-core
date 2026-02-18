@@ -6,13 +6,14 @@ import assert from 'node:assert';
 import { handleLineageRecord } from '../handlers/lineage-record.handler';
 
 describe('handleLineageRecord', () => {
-  test('returns accepted with routed_to list for valid payload', () => {
+  test('returns accepted with execution_id and routed_to list for valid payload', () => {
     const result = handleLineageRecord({
       execution_id: 'exec-123',
       source: 'test-agent',
       event: 'completed',
     });
-    assert.strictEqual(result.accepted, true);
+    assert.strictEqual(result.status, 'accepted');
+    assert.strictEqual(result.execution_id, 'exec-123');
     assert.deepStrictEqual(result.routed_to, [
       'llm-memory-graph',
       'llm-registry',
@@ -43,7 +44,8 @@ describe('handleLineageRecord', () => {
       output_hash: 'sha256:abc',
       event: 'transform',
     });
-    assert.strictEqual(result.accepted, true);
+    assert.strictEqual(result.status, 'accepted');
+    assert.strictEqual(result.execution_id, 'exec-456');
     assert.strictEqual(result.routed_to.length, 3);
   });
 

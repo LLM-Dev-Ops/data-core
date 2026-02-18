@@ -10,7 +10,8 @@ export interface LineageRecordPayload {
 }
 
 export interface LineageRecordResult {
-  accepted: true;
+  status: 'accepted';
+  execution_id: string;
   routed_to: string[];
 }
 
@@ -79,5 +80,5 @@ export function handleLineageRecord(payload: Record<string, unknown>): LineageRe
     console.error('[lineage-record] Unexpected fanout error:', err);
   });
 
-  return { accepted: true, routed_to: [...ROUTED_TO] };
+  return { status: 'accepted', execution_id, routed_to: [...ROUTED_TO] };
 }
