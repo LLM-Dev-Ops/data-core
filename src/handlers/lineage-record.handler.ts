@@ -22,12 +22,16 @@ const SERVICE_URLS = {
 
 const ROUTED_TO = ['llm-memory-graph', 'llm-registry', 'llm-data-vault'] as const;
 
-function postJSON(url: string, body: Record<string, unknown>): Promise<Response> {
-  return fetch(url, {
+async function postJSON(url: string, body: Record<string, unknown>): Promise<void> {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  // Consume the response body to release the underlying socket back to the pool.
+  // Without this, undici keeps the socket allocated and eventually exhausts the
+  // connection pool or triggers UND_ERR_ABORTED on GC, crashing the process.
+  await res.text();
 }
 
 export function handleLineageRecord(payload: Record<string, unknown>): LineageRecordResult {
@@ -71,6 +75,8 @@ export function handleLineageRecord(payload: Record<string, unknown>): LineageRe
         console.error(`[lineage-record] Failed to route to ${ROUTED_TO[i]}:`, r.reason);
       }
     });
+  }).catch((err) => {
+    console.error('[lineage-record] Unexpected fanout error:', err);
   });
 
   return { accepted: true, routed_to: [...ROUTED_TO] };
